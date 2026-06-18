@@ -1,0 +1,34 @@
+# General Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env/
+
+# Environment Variables
+.env
+.env.*
+
+# Database
+*.sqlite3
+*.db
+data/database.sqlite3
+data/feedback.txt
+data/passport_photos/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
