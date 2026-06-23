@@ -16,12 +16,21 @@ LANGUAGE_BUTTON_KEYS = (
     "yes",
     "no",
     "logout",
+    "confirm",
     "profile",
     "language",
     "feedback",
     "contacts",
     "china_address",
     "search",
+    "by_trek",
+    "by_my_code",
+    "manage_users",
+    "add_user",
+    "search_user",
+    "upload_db",
+    "broadcast",
+    "admin_search",
 )
 
 

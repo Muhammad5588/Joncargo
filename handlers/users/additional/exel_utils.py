@@ -34,7 +34,7 @@ async def handle_excel_import(message: Message, state: FSMContext):
 
     # Faqat Excel fayllarni qabul qilish
     if not file.file_name.endswith(('.xlsx', '.xls')):
-        await message.answer("❌ Faqat Excel fayl (.xlsx yoki .xls) yuborish mumkin!")
+        await message.answer(get_text(lang, 'excel_only'))
         return
     
     # Faylni yuklab olish
@@ -51,7 +51,7 @@ async def handle_excel_import(message: Message, state: FSMContext):
     )
 
     await message.answer(
-        "📥 Import boshlandi. Jarayon tugaganda natija shu chatga yuboriladi.",
+        get_text(lang, 'import_started'),
         reply_markup=admin_menu_keyboard(lang, True)
     )
     await state.set_state(AdminStates.in_admin_panel)

@@ -118,7 +118,6 @@ async def process_trek_search(message: Message, state: FSMContext):
                     name=item['shipping_name'] or "—",
                     tracking=item['tracking_code'],
                     package=item['package_number'] or "—",
-                    quantity=item['quantity'],
                     flight=item['flight'] or "—"
                 )
                 
@@ -174,7 +173,6 @@ async def show_my_shipments(message: Message, state: FSMContext):
             name=item['shipping_name'] or "—",
             tracking=item['tracking_code'],
             package=item['package_number'] or "—",
-            quantity=item['quantity'],
             flight=item['flight'] or "—"
         )
         

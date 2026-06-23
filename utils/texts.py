@@ -204,7 +204,6 @@ TEXTS = {
             "📦 {name}\n"
             "🔢 Trek: {tracking}\n"
             "📍 Paket: {package}\n"
-            "🔢 Miqdor: {quantity}\n"
             "✈️ Parvoz: {flight}"
         ),
         
@@ -268,6 +267,84 @@ TEXTS = {
         'broadcast_completed': "✅ Xabar {sent}/{total} ta foydalanuvchiga yuborildi!",
         'enter_user_search': "🔍 Mijoz kodini yoki telefon raqamini kiriting:",
         'user_not_found': "❌ Foydalanuvchi topilmadi",
+        'upload_file_prompt': "📂 Yuklar bazasini Excel yoki CSV fayl ko'rinishida yuboring:",
+        'invalid_file_format': "❌ Fayl formati noto'g'ri. Faqat .xlsx, .xls yoki .csv yuboring.",
+        'database_uploaded': "✅ Database muvaffaqiyatli yuklandi!",
+        'upload_error': "❌ Yuklashda xatolik",
+        'trek_not_found': "❌ Trek kod topilmadi",
+        'no_shipments_found': "❌ Hech qanday yuk topilmadi",
+        'broadcast_cancelled': "❌ Bekor qilindi",
+        'message_not_found': "❌ Xabar topilmadi!",
+        'data_not_found': "❌ Xatolik: ma'lumotlar topilmadi",
+        'user_id_not_found': "❌ Xatolik: User ID topilmadi",
+        'reject_reason_prompt_user_id': "❌ User ID {user_id} ni rad etish uchun sabab yozing:",
+        'rejected_with_reason': "❌ RAD ETILDI\nSabab: {reason}",
+        'user_rejected_with_reason': "✅ User ID {user_id} rad etildi!\nSabab: {reason}",
+        'admin_customer_label': "👤 Mijoz",
+        'feedback_reply_prompt': "💬 Javobingizni yozing:",
+        'feedback_reply_sent': "✅ Javob foydalanuvchiga yuborildi!",
+        'save_error': "❌ Saqlashda xatolik",
+        'send_error': "❌ Yuborishda xatolik: {error}",
+        'users_export_stats': (
+            "📊 FOYDALANUVCHILAR STATISTIKASI\n\n"
+            "👥 Jami: {count} ta\n\n"
+            "1) Hozirgi foydalanuvchilar Excel fayli yuboriladi\n"
+            "2) Import uchun shablon Excel yuboriladi\n"
+            "3) To'ldirilgan Excel faylni shu yerga yuboring"
+        ),
+        'users_export_caption': "📥 Hozirgi foydalanuvchilar ro'yxati (Excel)",
+        'users_import_template_caption': (
+            "📋 Import shabloni (Excel)\n"
+            "Ustunlar: code_str, fullname_passport, phone_number, passport_series, "
+            "birth_date, passport_pinfl, address_region, telegram_id"
+        ),
+        'users_export_error': "❌ Excel fayllarni tayyorlashda xatolik yuz berdi",
+        'send_filled_excel_prompt': "📤 Endi to'ldirilgan Excel faylni yuboring yoki ⬅️ Orqaga bosing.",
+        'excel_only': "❌ Faqat Excel fayl (.xlsx yoki .xls) yuborish mumkin!",
+        'import_started': "📥 Import boshlandi. Jarayon tugaganda natija shu chatga yuboriladi.",
+        'retry_input': "Qayta kiriting:",
+        'manual_add_start': "➕ Qo'lda mijoz qo'shish\n\n{prompt}",
+        'manual_fullname_prompt': "1/6 F.I.O kiriting (masalan: Ali Valiyev)",
+        'manual_phone_prompt': "2/6 Telefon raqam kiriting (masalan: +998901234567)",
+        'manual_passport_prompt': "3/6 Pasport seriyasi kiriting (masalan: AA1234567)",
+        'manual_birth_date_prompt': "4/6 Tug'ilgan sanani kiriting (masalan: 15.03.1990)",
+        'manual_pinfl_prompt': "5/6 PINFL kiriting (14 xonali)",
+        'manual_address_prompt': "6/6 To'liq manzil kiriting",
+        'manual_user_preview': (
+            "✅ Ma'lumotlarni tekshiring:\n\n"
+            "👤 F.I.O: {fullname}\n"
+            "📱 Telefon: {phone}\n"
+            "🔖 Pasport: {passport_number}\n"
+            "📅 Tug'ilgan sana: {birth_date}\n"
+            "🔢 PINFL: {pinfl}\n"
+            "📍 Manzil: {address}\n\n"
+            "Tasdiqlaysizmi?"
+        ),
+        'manual_add_cancelled': "❌ Qo'lda mijoz qo'shish bekor qilindi",
+        'manual_add_success': "✅ Mijoz muvaffaqiyatli qo'shildi\n\n🆔 Client code: {client_code}",
+        'manual_add_error': "❌ Mijoz qo'shishda xatolik: {error}",
+        'full_user_info': (
+            "👤 TO'LIQ MA'LUMOTLAR\n\n"
+            "🆔 ID: {id}\n"
+            "👨‍💼 F.I.O: {fullname}\n"
+            "🔐 Mijoz kodi: {client_code}\n"
+            "📱 Telefon: {phone}\n"
+            "🔖 Pasport: {passport_number}\n"
+            "📅 Tug'ilgan: {birth_date}\n"
+            "🔢 PINFL: {pinfl}\n"
+            "📍 Manzil: {address}\n\n"
+            "✅ Holat: {status}\n"
+            "🇨🇳 Xitoy manzil: {china_address_status}\n"
+            "🌐 Til: {language}\n\n"
+            "📅 Ro'yxat: {registered_at}\n"
+            "📅 Oxirgi kirish: {last_login}\n\n"
+            "💬 Telegram ID: {telegram_id}"
+        ),
+        'china_address_status_confirmed': "✅ Tasdiqlangan",
+        'china_address_status_unconfirmed': "❌ Tasdiqlanmagan",
+        'passport_photos': "\n📸 Pasport rasmlari:\n",
+        'passport_photo_front': "• Old: {photo}\n",
+        'passport_photo_back': "• Orqa: {photo}\n",
         
         # ==================== XATOLAR ====================
         'error_general': "❌ Xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.",
@@ -517,7 +594,6 @@ TEXTS = {
             "📦 {name}\n"
             "🔢 Трек: {tracking}\n"
             "📍 Пакет: {package}\n"
-            "🔢 Количество: {quantity}\n"
             "✈️ Рейс: {flight}"
         ),
         
@@ -581,6 +657,84 @@ TEXTS = {
         'broadcast_completed': "✅ Сообщение отправлено {sent}/{total} пользователям!",
         'enter_user_search': "🔍 Введите код клиента или номер телефона:",
         'user_not_found': "❌ Пользователь не найден",
+        'upload_file_prompt': "📂 Отправьте базу грузов в формате Excel или CSV:",
+        'invalid_file_format': "❌ Неверный формат файла. Отправьте только .xlsx, .xls или .csv.",
+        'database_uploaded': "✅ База успешно загружена!",
+        'upload_error': "❌ Ошибка загрузки",
+        'trek_not_found': "❌ Трек-код не найден",
+        'no_shipments_found': "❌ Грузы не найдены",
+        'broadcast_cancelled': "❌ Отменено",
+        'message_not_found': "❌ Сообщение не найдено!",
+        'data_not_found': "❌ Ошибка: данные не найдены",
+        'user_id_not_found': "❌ Ошибка: User ID не найден",
+        'reject_reason_prompt_user_id': "❌ Напишите причину отклонения User ID {user_id}:",
+        'rejected_with_reason': "❌ ОТКЛОНЕНО\nПричина: {reason}",
+        'user_rejected_with_reason': "✅ User ID {user_id} отклонён!\nПричина: {reason}",
+        'admin_customer_label': "👤 Клиент",
+        'feedback_reply_prompt': "💬 Напишите ваш ответ:",
+        'feedback_reply_sent': "✅ Ответ отправлен пользователю!",
+        'save_error': "❌ Ошибка сохранения",
+        'send_error': "❌ Ошибка отправки: {error}",
+        'users_export_stats': (
+            "📊 СТАТИСТИКА ПОЛЬЗОВАТЕЛЕЙ\n\n"
+            "👥 Всего: {count}\n\n"
+            "1) Будет отправлен Excel-файл текущих пользователей\n"
+            "2) Будет отправлен шаблон Excel для импорта\n"
+            "3) Отправьте заполненный Excel-файл сюда"
+        ),
+        'users_export_caption': "📥 Текущий список пользователей (Excel)",
+        'users_import_template_caption': (
+            "📋 Шаблон импорта (Excel)\n"
+            "Колонки: code_str, fullname_passport, phone_number, passport_series, "
+            "birth_date, passport_pinfl, address_region, telegram_id"
+        ),
+        'users_export_error': "❌ Ошибка при подготовке Excel-файлов",
+        'send_filled_excel_prompt': "📤 Теперь отправьте заполненный Excel-файл или нажмите ⬅️ Назад.",
+        'excel_only': "❌ Можно отправлять только Excel-файлы (.xlsx или .xls)!",
+        'import_started': "📥 Импорт начался. Результат будет отправлен в этот чат после завершения.",
+        'retry_input': "Введите заново:",
+        'manual_add_start': "➕ Ручное добавление клиента\n\n{prompt}",
+        'manual_fullname_prompt': "1/6 Введите Ф.И.О (например: Ali Valiyev)",
+        'manual_phone_prompt': "2/6 Введите номер телефона (например: +998901234567)",
+        'manual_passport_prompt': "3/6 Введите серию паспорта (например: AA1234567)",
+        'manual_birth_date_prompt': "4/6 Введите дату рождения (например: 15.03.1990)",
+        'manual_pinfl_prompt': "5/6 Введите ПИНФЛ (14 цифр)",
+        'manual_address_prompt': "6/6 Введите полный адрес",
+        'manual_user_preview': (
+            "✅ Проверьте данные:\n\n"
+            "👤 Ф.И.О: {fullname}\n"
+            "📱 Телефон: {phone}\n"
+            "🔖 Паспорт: {passport_number}\n"
+            "📅 Дата рождения: {birth_date}\n"
+            "🔢 ПИНФЛ: {pinfl}\n"
+            "📍 Адрес: {address}\n\n"
+            "Подтверждаете?"
+        ),
+        'manual_add_cancelled': "❌ Ручное добавление клиента отменено",
+        'manual_add_success': "✅ Клиент успешно добавлен\n\n🆔 Client code: {client_code}",
+        'manual_add_error': "❌ Ошибка добавления клиента: {error}",
+        'full_user_info': (
+            "👤 ПОЛНАЯ ИНФОРМАЦИЯ\n\n"
+            "🆔 ID: {id}\n"
+            "👨‍💼 Ф.И.О: {fullname}\n"
+            "🔐 Код клиента: {client_code}\n"
+            "📱 Телефон: {phone}\n"
+            "🔖 Паспорт: {passport_number}\n"
+            "📅 Дата рождения: {birth_date}\n"
+            "🔢 ПИНФЛ: {pinfl}\n"
+            "📍 Адрес: {address}\n\n"
+            "✅ Статус: {status}\n"
+            "🇨🇳 Адрес в Китае: {china_address_status}\n"
+            "🌐 Язык: {language}\n\n"
+            "📅 Регистрация: {registered_at}\n"
+            "📅 Последний вход: {last_login}\n\n"
+            "💬 Telegram ID: {telegram_id}"
+        ),
+        'china_address_status_confirmed': "✅ Подтверждён",
+        'china_address_status_unconfirmed': "❌ Не подтверждён",
+        'passport_photos': "\n📸 Фото паспорта:\n",
+        'passport_photo_front': "• Лицевая сторона: {photo}\n",
+        'passport_photo_back': "• Обратная сторона: {photo}\n",
         
         # Xatolar
         'error_general': "❌ Произошла ошибка. Попробуйте еще раз.",

@@ -57,9 +57,18 @@ def get_is_private(message_or_callback) -> bool:
     return True
 
 
-async def get_admin_lang(user_id: int) -> str:
+async def get_admin_lang(user_id: int, state: FSMContext = None) -> str:
     user = await db.get_user_by_telegram_id(user_id)
-    return user['language'] if user else 'uz'
+    if user and user.get('language'):
+        return user['language']
+
+    if state:
+        data = await state.get_data()
+        lang = data.get('language')
+        if lang in ('uz', 'ru'):
+            return lang
+
+    return 'uz'
 
 
 # ==================== ADMIN PANEL ====================
@@ -87,13 +96,11 @@ async def show_admin_panel(message: Message, state: FSMContext):
 # ==================== APPROVAL / REJECTION ====================
 
 @dp.callback_query(F.data.startswith("approve:"))
-async def approve_user_callback(callback: CallbackQuery):
+async def approve_user_callback(callback: CallbackQuery, state: FSMContext):
     """Foydalanuvchini tasdiqlash"""
     # Admin tekshiruvi
     if not await db.is_admin(callback.from_user.id):
-        # respond in admin's language if possible
-        admin_user = await db.get_user_by_telegram_id(callback.from_user.id)
-        a_lang = admin_user['language'] if admin_user else 'uz'
+        a_lang = await get_admin_lang(callback.from_user.id, state)
         await callback.answer(get_text(a_lang, 'access_denied'), show_alert=True)
         return
 
@@ -172,8 +179,7 @@ async def approve_user_callback(callback: CallbackQuery):
 
             # Callback javob
             # Notify admin in their language
-            admin_user = await db.get_user_by_telegram_id(callback.from_user.id)
-            a_lang = admin_user['language'] if admin_user else 'uz'
+            a_lang = await get_admin_lang(callback.from_user.id, state)
             await callback.answer(get_text(a_lang, 'user_approved'), show_alert=True)
             
             # Audit log
@@ -195,11 +201,11 @@ async def approve_user_callback(callback: CallbackQuery):
             except:
                 pass
         else:
-            await callback.answer("❌ Xatolik yuz berdi!", show_alert=True)
+            await callback.answer(get_text(await get_admin_lang(callback.from_user.id, state), 'error_general'), show_alert=True)
     
     except Exception as e:
         logger.error(f"Approve callback error: {e}")
-        await callback.answer("❌ Xatolik!", show_alert=True)
+        await callback.answer(get_text(await get_admin_lang(callback.from_user.id, state), 'error_general'), show_alert=True)
 
 
 @dp.callback_query(F.data.startswith("reject:"))
@@ -207,10 +213,11 @@ async def reject_user_callback(callback: CallbackQuery, state: FSMContext):
     """Foydalanuvchini rad etish - sabab so'rash"""
     # Admin tekshiruvi
     if not await db.is_admin(callback.from_user.id):
-        await callback.answer("❌ Ruxsat yo'q!", show_alert=True)
+        await callback.answer(get_text(await get_admin_lang(callback.from_user.id, state), 'access_denied'), show_alert=True)
         return
 
     try:
+        lang = await get_admin_lang(callback.from_user.id, state)
         await callback.message.edit_reply_markup(reply_markup=None)
         user_id = int(callback.data.split(":")[1])
 
@@ -223,14 +230,14 @@ async def reject_user_callback(callback: CallbackQuery, state: FSMContext):
         await state.set_state(AdminStates.entering_rejection_reason)
 
         # Guruhda yoki private chatda - bir xil javob
-        reply_text = f"❌ User ID {user_id} ni rad etish uchun sabab yozing:"
+        reply_text = get_text(lang, 'reject_reason_prompt_user_id', user_id=user_id)
 
         await callback.message.reply(reply_text)
         await callback.answer()
 
     except Exception as e:
         logger.error(f"Reject callback error: {e}")
-        await callback.answer("❌ Xatolik!", show_alert=True)
+        await callback.answer(get_text(await get_admin_lang(callback.from_user.id, state), 'error_general'), show_alert=True)
 
 
 @dp.message(AdminStates.entering_rejection_reason, F.text)
@@ -242,19 +249,18 @@ async def process_rejection_reason(message: Message, state: FSMContext):
     rejection_chat_id = data.get('rejection_chat_id')
 
     # Determine admin language
-    admin_user = await db.get_user_by_telegram_id(message.from_user.id)
-    lang = admin_user['language'] if admin_user else 'uz'
+    lang = await get_admin_lang(message.from_user.id, state)
 
     if message.text == get_text(lang, 'back'):
         await state.clear()
         await message.answer(
-            get_text(lang, 'operation_cancelled') if lang == 'uz' else get_text(lang, 'operation_cancelled'),
+            get_text(lang, 'operation_cancelled'),
             reply_markup=admin_menu_keyboard(lang, get_is_private(message))
         )
         return
 
     if not user_id:
-        await message.answer("❌ Xatolik: User ID topilmadi")
+        await message.answer(get_text(lang, 'user_id_not_found'))
         return
 
     reason = message.text.strip()
@@ -291,15 +297,13 @@ async def process_rejection_reason(message: Message, state: FSMContext):
                 # Guruhga rad etilgani haqida xabar yuborish
                 await bot.send_message(
                     rejection_chat_id,
-                    f"❌ RAD ETILDI\nSabab: {reason}",
+                    get_text(lang, 'rejected_with_reason', reason=reason),
                     reply_to_message_id=rejection_message_id
                 )
             except Exception as e:
                 logger.error(f"Error updating rejection message: {e}")
 
-        await message.answer(
-            f"✅ User ID {user_id} rad etildi!\nSabab: {reason}"
-        )
+        await message.answer(get_text(lang, 'user_rejected_with_reason', user_id=user_id, reason=reason))
         
         # Audit log
         await audit_logger.log(
@@ -310,7 +314,7 @@ async def process_rejection_reason(message: Message, state: FSMContext):
             details=f"User {user_id} rad etildi. Sabab: {reason}"
         )
     else:
-        await message.answer("❌ Xatolik yuz berdi!")
+        await message.answer(get_text(lang, 'error_general'))
 
     await state.clear()
 
@@ -373,6 +377,8 @@ async def show_all_users(message: Message, state: FSMContext):
         await message.answer(get_text(u_lang, 'access_denied'))
         return
 
+    lang = await get_admin_lang(message.from_user.id, state)
+
     # Foydalanuvchilar soni
     user_count = await db.user_count()
 
@@ -405,29 +411,19 @@ async def show_all_users(message: Message, state: FSMContext):
         }])
         template_df.to_excel(template_file, index=False)
 
-        await message.answer(
-            f"📊 FOYDALANUVCHILAR STATISTIKASI\n\n"
-            f"👥 Jami: {user_count} ta\n\n"
-            f"1) Hozirgi foydalanuvchilar Excel fayli yuboriladi\n"
-            f"2) Import uchun shablon Excel yuboriladi\n"
-            f"3) To'ldirilgan Excel faylni shu yerga yuboring"
-        )
+        await message.answer(get_text(lang, 'users_export_stats', count=user_count))
 
         await message.answer_document(
             document=FSInputFile(users_file),
-            caption="📥 Hozirgi foydalanuvchilar ro'yxati (Excel)"
+            caption=get_text(lang, 'users_export_caption')
         )
         await message.answer_document(
             document=FSInputFile(template_file),
-            caption=(
-                "📋 Import shabloni (Excel)\n"
-                "Ustunlar: code_str, fullname_passport, phone_number, passport_series, "
-                "birth_date, passport_pinfl, address_region, telegram_id"
-            )
+            caption=get_text(lang, 'users_import_template_caption')
         )
     except Exception as e:
         logger.error(f"Users export/template error: {e}")
-        await message.answer("❌ Excel fayllarni tayyorlashda xatolik yuz berdi")
+        await message.answer(get_text(lang, 'users_export_error'))
     finally:
         for file_path in (users_file, template_file):
             try:
@@ -436,12 +432,9 @@ async def show_all_users(message: Message, state: FSMContext):
             except Exception:
                 pass
 
-    # Use admin language for back keyboard
-    admin_user = await db.get_user_by_telegram_id(message.from_user.id)
-    a_lang = admin_user['language'] if admin_user else 'uz'
     await message.answer(
-        "📤 Endi to'ldirilgan Excel faylni yuboring yoki ⬅️ Orqaga bosing.",
-        reply_markup=back_keyboard(a_lang, get_is_private(message))
+        get_text(lang, 'send_filled_excel_prompt'),
+        reply_markup=back_keyboard(lang, get_is_private(message))
     )
     await state.set_state(AdminStates.user_exel_importing_process)
 
@@ -459,20 +452,17 @@ async def start_manual_add_user(message: Message, state: FSMContext):
         return
 
     # Use admin language for prompts
-    admin_user = await db.get_user_by_telegram_id(message.from_user.id)
-    a_lang = admin_user['language'] if admin_user else 'uz'
+    a_lang = await get_admin_lang(message.from_user.id, state)
     await state.set_state(AdminStates.manual_user_fullname)
     await message.answer(
-        "➕ Qo'lda mijoz qo'shish\n\n"
-        "1/6 F.I.O kiriting (masalan: Ali Valiyev)",
+        get_text(a_lang, 'manual_add_start', prompt=get_text(a_lang, 'manual_fullname_prompt')),
         reply_markup=back_keyboard(a_lang, get_is_private(message))
     )
 
 
 @dp.message(AdminStates.manual_user_fullname, F.text)
 async def manual_user_fullname(message: Message, state: FSMContext):
-    admin_user = await db.get_user_by_telegram_id(message.from_user.id)
-    a_lang = admin_user['language'] if admin_user else 'uz'
+    a_lang = await get_admin_lang(message.from_user.id, state)
     if message.text == get_text(a_lang, 'back'):
         await state.set_state(AdminStates.in_admin_panel)
         await message.answer(get_text(a_lang, 'admin_welcome'), reply_markup=admin_menu_keyboard(a_lang, get_is_private(message)))
@@ -480,116 +470,113 @@ async def manual_user_fullname(message: Message, state: FSMContext):
 
     valid, msg, fullname = Validators.validate_fullname(message.text)
     if not valid:
-        await message.answer(f"❌ {msg}\n\nQayta kiriting:")
+        await message.answer(f"❌ {msg}\n\n{get_text(a_lang, 'retry_input')}")
         return
 
     await state.update_data(fullname=fullname)
     await state.set_state(AdminStates.manual_user_phone)
-    await message.answer("2/6 Telefon raqam kiriting (masalan: +998901234567)")
+    await message.answer(get_text(a_lang, 'manual_phone_prompt'))
 
 
 @dp.message(AdminStates.manual_user_phone, F.text)
 async def manual_user_phone(message: Message, state: FSMContext):
-    admin_user = await db.get_user_by_telegram_id(message.from_user.id)
-    a_lang = admin_user['language'] if admin_user else 'uz'
+    a_lang = await get_admin_lang(message.from_user.id, state)
     if message.text == get_text(a_lang, 'back'):
         await state.set_state(AdminStates.manual_user_fullname)
-        await message.answer("1/6 F.I.O kiriting:")
+        await message.answer(get_text(a_lang, 'manual_fullname_prompt'))
         return
 
     valid, msg, phone = Validators.validate_phone(message.text)
     if not valid:
-        await message.answer(f"❌ {msg}\n\nQayta kiriting:")
+        await message.answer(f"❌ {msg}\n\n{get_text(a_lang, 'retry_input')}")
         return
 
     await state.update_data(phone=phone)
     await state.set_state(AdminStates.manual_user_passport)
-    await message.answer("3/6 Pasport seriyasi kiriting (masalan: AA1234567)")
+    await message.answer(get_text(a_lang, 'manual_passport_prompt'))
 
 
 @dp.message(AdminStates.manual_user_passport, F.text)
 async def manual_user_passport(message: Message, state: FSMContext):
-    admin_user = await db.get_user_by_telegram_id(message.from_user.id)
-    a_lang = admin_user['language'] if admin_user else 'uz'
+    a_lang = await get_admin_lang(message.from_user.id, state)
     if message.text == get_text(a_lang, 'back'):
         await state.set_state(AdminStates.manual_user_phone)
-        await message.answer("2/6 Telefon raqam kiriting:")
+        await message.answer(get_text(a_lang, 'manual_phone_prompt'))
         return
 
     valid, msg, passport = Validators.validate_passport_number(message.text)
     if not valid:
-        await message.answer(f"❌ {msg}\n\nQayta kiriting:")
+        await message.answer(f"❌ {msg}\n\n{get_text(a_lang, 'retry_input')}")
         return
 
     await state.update_data(passport_number=passport)
     await state.set_state(AdminStates.manual_user_birth_date)
-    await message.answer("4/6 Tug'ilgan sanani kiriting (masalan: 15.03.1990)")
+    await message.answer(get_text(a_lang, 'manual_birth_date_prompt'))
 
 
 @dp.message(AdminStates.manual_user_birth_date, F.text)
 async def manual_user_birth_date(message: Message, state: FSMContext):
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
 
     if message.text in (get_text('uz', 'back'), get_text('ru', 'back')):
         await state.set_state(AdminStates.manual_user_passport)
-        await message.answer("3/6 Pasport seriyasi kiriting:")
+        await message.answer(get_text(lang, 'manual_passport_prompt'))
         return
 
     valid, msg, birth_date, _, _ = Validators.validate_birth_date(message.text)
     if not valid:
-        await message.answer(f"❌ {msg}\n\nQayta kiriting:")
+        await message.answer(f"❌ {msg}\n\n{get_text(lang, 'retry_input')}")
         return
 
     await state.update_data(birth_date=birth_date)
     await state.set_state(AdminStates.manual_user_pinfl)
-    await message.answer("5/6 PINFL kiriting (14 xonali)")
+    await message.answer(get_text(lang, 'manual_pinfl_prompt'))
 
 
 @dp.message(AdminStates.manual_user_pinfl, F.text)
 async def manual_user_pinfl(message: Message, state: FSMContext):
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
 
     if message.text in (get_text('uz', 'back'), get_text('ru', 'back')):
         await state.set_state(AdminStates.manual_user_birth_date)
-        await message.answer("4/6 Tug'ilgan sanani kiriting:")
+        await message.answer(get_text(lang, 'manual_birth_date_prompt'))
         return
 
     valid, msg, pinfl = Validators.validate_pinfl(message.text)
     if not valid:
-        await message.answer(f"❌ {msg}\n\nQayta kiriting:")
+        await message.answer(f"❌ {msg}\n\n{get_text(lang, 'retry_input')}")
         return
 
     await state.update_data(pinfl=pinfl)
     await state.set_state(AdminStates.manual_user_address)
-    await message.answer("6/6 To'liq manzil kiriting")
+    await message.answer(get_text(lang, 'manual_address_prompt'))
 
 
 @dp.message(AdminStates.manual_user_address, F.text)
 async def manual_user_address(message: Message, state: FSMContext):
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
 
     if message.text in (get_text('uz', 'back'), get_text('ru', 'back')):
         await state.set_state(AdminStates.manual_user_pinfl)
-        await message.answer("5/6 PINFL kiriting:")
+        await message.answer(get_text(lang, 'manual_pinfl_prompt'))
         return
 
     valid, msg, address = Validators.validate_address(message.text)
     if not valid:
-        await message.answer(f"❌ {msg}\n\nQayta kiriting:")
+        await message.answer(f"❌ {msg}\n\n{get_text(lang, 'retry_input')}")
         return
 
     await state.update_data(address=address)
     data = await state.get_data()
 
-    preview = (
-        "✅ Ma'lumotlarni tekshiring:\n\n"
-        f"👤 F.I.O: {data['fullname']}\n"
-        f"📱 Telefon: {data['phone']}\n"
-        f"🔖 Pasport: {data['passport_number']}\n"
-        f"📅 Tug'ilgan sana: {data['birth_date']}\n"
-        f"🔢 PINFL: {data['pinfl']}\n"
-        f"📍 Manzil: {address}\n\n"
-        "Tasdiqlaysizmi?"
+    preview = get_text(
+        lang, 'manual_user_preview',
+        fullname=data['fullname'],
+        phone=data['phone'],
+        passport_number=data['passport_number'],
+        birth_date=data['birth_date'],
+        pinfl=data['pinfl'],
+        address=address,
     )
     await state.set_state(AdminStates.manual_user_confirm)
     await message.answer(preview, reply_markup=confirm_keyboard(lang, get_is_private(message)))
@@ -597,11 +584,11 @@ async def manual_user_address(message: Message, state: FSMContext):
 
 @dp.message(AdminStates.manual_user_confirm, F.text)
 async def manual_user_confirm(message: Message, state: FSMContext):
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
 
     if message.text in (get_text('uz', 'cancel'), get_text('ru', 'cancel'), get_text('uz', 'back'), get_text('ru', 'back')):
         await state.set_state(AdminStates.in_admin_panel)
-        await message.answer("❌ Qo'lda mijoz qo'shish bekor qilindi", reply_markup=admin_menu_keyboard(lang, get_is_private(message)))
+        await message.answer(get_text(lang, 'manual_add_cancelled'), reply_markup=admin_menu_keyboard(lang, get_is_private(message)))
         return
 
     if message.text not in (get_text('uz', 'confirm'), get_text('ru', 'confirm')):
@@ -629,13 +616,13 @@ async def manual_user_confirm(message: Message, state: FSMContext):
 
     if success:
         await message.answer(
-            f"✅ Mijoz muvaffaqiyatli qo'shildi\n\n🆔 Client code: {client_code}",
+            get_text(lang, 'manual_add_success', client_code=client_code),
             reply_markup=admin_menu_keyboard(lang, get_is_private(message))
         )
     else:
         await message.answer(
-            f"❌ Mijoz qo'shishda xatolik: {msg}",
-            reply_markup=admin_menu_keyboard('uz', get_is_private(message))
+            get_text(lang, 'manual_add_error', error=msg),
+            reply_markup=admin_menu_keyboard(lang, get_is_private(message))
         )
 
     await state.set_state(AdminStates.in_admin_panel)
@@ -644,11 +631,11 @@ async def manual_user_confirm(message: Message, state: FSMContext):
 # ==================== FOYDALANUVCHINI TO'LIQ KO'RISH ====================
 
 @dp.callback_query(F.data.startswith("viewuser:"))
-async def view_user_details(callback: CallbackQuery):
+async def view_user_details(callback: CallbackQuery, state: FSMContext):
     """Foydalanuvchi to'liq ma'lumotlarini ko'rish"""
     # Admin tekshiruvi
     if not await db.is_admin(callback.from_user.id):
-        await callback.answer("❌ Ruxsat yo'q!", show_alert=True)
+        await callback.answer(get_text(await get_admin_lang(callback.from_user.id, state), 'access_denied'), show_alert=True)
         return
 
     try:
@@ -656,45 +643,45 @@ async def view_user_details(callback: CallbackQuery):
         user = await db.get_user_by_id(user_id)
         
         if not user:
-            await callback.answer("❌ Foydalanuvchi topilmadi!", show_alert=True)
+            await callback.answer(get_text(await get_admin_lang(callback.from_user.id, state), 'user_not_found'), show_alert=True)
             return
         
-        # To'liq ma'lumotlar
-        full_info = f"""
-👤 TO'LIQ MA'LUMOTLAR
-
-🆔 ID: {user['id']}
-👨‍💼 F.I.O: {user['fullname']}
-🔐 Mijoz kodi: {user['client_code']}
-📱 Telefon: {format_phone_display(user['phone'])}
-🔖 Pasport: {user['passport_number']}
-📅 Tug'ilgan: {user['birth_date']}
-🔢 PINFL: {user['pinfl']}
-📍 Manzil: {user['address']}
-
-✅ Holat: {format_verification_status(user['verification_status'], 'uz')}
-🇨🇳 Xitoy manzil: {'✅ Tasdiqlangan' if user['china_address_confirmed'] else '❌ Tasdiqlanmagan'}
-🌐 Til: {user['language'].upper()}
-
-📅 Ro'yxat: {format_datetime(user['registered_at'])}
-📅 Oxirgi kirish: {format_datetime(user['last_login']) if user['last_login'] else '—'}
-
-💬 Telegram ID: {user['telegram_id'] if user['telegram_id'] else '—'}
-"""
+        lang = await get_admin_lang(callback.from_user.id, state)
+        china_address_status = get_text(
+            lang,
+            'china_address_status_confirmed' if user['china_address_confirmed'] else 'china_address_status_unconfirmed'
+        )
+        full_info = get_text(
+            lang, 'full_user_info',
+            id=user['id'],
+            fullname=user['fullname'],
+            client_code=user['client_code'],
+            phone=format_phone_display(user['phone']),
+            passport_number=user['passport_number'],
+            birth_date=user['birth_date'],
+            pinfl=user['pinfl'],
+            address=user['address'],
+            status=format_verification_status(user['verification_status'], lang),
+            china_address_status=china_address_status,
+            language=user['language'].upper(),
+            registered_at=format_datetime(user['registered_at']),
+            last_login=format_datetime(user['last_login']) if user['last_login'] else '—',
+            telegram_id=user['telegram_id'] if user['telegram_id'] else '—'
+        )
         
         # Pasport rasmlar
-        photos_text = "\n📸 Pasport rasmlari:\n"
+        photos_text = get_text(lang, 'passport_photos')
         if user['passport_front_photo']:
-            photos_text += f"• Old: {user['passport_front_photo']}\n"
+            photos_text += get_text(lang, 'passport_photo_front', photo=user['passport_front_photo'])
         if user['passport_back_photo']:
-            photos_text += f"• Orqa: {user['passport_back_photo']}\n"
+            photos_text += get_text(lang, 'passport_photo_back', photo=user['passport_back_photo'])
         
         await callback.message.answer(full_info + photos_text)
         await callback.answer()
     
     except Exception as e:
         logger.error(f"View user error: {e}")
-        await callback.answer("❌ Xatolik!", show_alert=True)
+        await callback.answer(get_text(await get_admin_lang(callback.from_user.id, state), 'error_general'), show_alert=True)
 
 
 
@@ -707,10 +694,10 @@ async def view_user_details(callback: CallbackQuery):
 async def start_user_search(message: Message, state: FSMContext):
     """User qidirishni boshlash"""
     if not await db.is_admin(message.from_user.id):
-        await message.answer(get_text(await get_admin_lang(message.from_user.id), 'access_denied'))
+        await message.answer(get_text(await get_admin_lang(message.from_user.id, state), 'access_denied'))
         return
 
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
     
     await state.set_state(AdminStates.searching_user)
     await message.answer(
@@ -722,7 +709,7 @@ async def start_user_search(message: Message, state: FSMContext):
 @dp.message(AdminStates.searching_user, F.text)
 async def process_user_search(message: Message, state: FSMContext):
     """User ni qidirish"""
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
 
     if message.text in (get_text('uz', 'back'), get_text('ru', 'back')):
         await state.set_state(AdminStates.in_admin_panel)
@@ -769,10 +756,10 @@ async def process_user_search(message: Message, state: FSMContext):
 async def start_broadcast(message: Message, state: FSMContext):
     """Broadcast ni boshlash"""
     if not await db.is_admin(message.from_user.id):
-        await message.answer(get_text(await get_admin_lang(message.from_user.id), 'access_denied'))
+        await message.answer(get_text(await get_admin_lang(message.from_user.id, state), 'access_denied'))
         return
 
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
     
     await state.set_state(AdminStates.entering_broadcast_message)
     await message.answer(
@@ -784,7 +771,7 @@ async def start_broadcast(message: Message, state: FSMContext):
 @dp.message(AdminStates.entering_broadcast_message, F.text)
 async def process_broadcast_message(message: Message, state: FSMContext):
     """Broadcast xabarini qabul qilish"""
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
 
     if message.text in (get_text('uz', 'back'), get_text('ru', 'back')):
         await state.set_state(AdminStates.in_admin_panel)
@@ -803,8 +790,8 @@ async def process_broadcast_message(message: Message, state: FSMContext):
     await state.update_data(broadcast_message=broadcast_text)
     
     await message.answer(
-        get_text('uz', 'broadcast_confirm', count=user_count, message=broadcast_text),
-        reply_markup=broadcast_confirm_inline_keyboard('uz')
+        get_text(lang, 'broadcast_confirm', count=user_count, message=broadcast_text),
+        reply_markup=broadcast_confirm_inline_keyboard(lang)
     )
 
 
@@ -813,21 +800,22 @@ async def confirm_broadcast(callback: CallbackQuery, state: FSMContext):
     """Broadcast ni tasdiqlash va yuborish"""
     # Admin tekshiruvi
     if not await db.is_admin(callback.from_user.id):
-        await callback.answer("❌ Ruxsat yo'q!", show_alert=True)
+        await callback.answer(get_text(await get_admin_lang(callback.from_user.id, state), 'access_denied'), show_alert=True)
         return
 
+    lang = await get_admin_lang(callback.from_user.id, state)
     data = await state.get_data()
     broadcast_text = data.get('broadcast_message')
     
     if not broadcast_text:
-        await callback.answer("❌ Xabar topilmadi!", show_alert=True)
+        await callback.answer(get_text(lang, 'message_not_found'), show_alert=True)
         return
     
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
     
     # Yuborish jarayoni
-    await callback.message.answer(get_text('uz', 'broadcast_sending'))
+    await callback.message.answer(get_text(lang, 'broadcast_sending'))
     
     users = await db.get_all_active_users()
     
@@ -847,8 +835,8 @@ async def confirm_broadcast(callback: CallbackQuery, state: FSMContext):
     
     # Natija
     await callback.message.answer(
-        get_text('uz', 'broadcast_completed', sent=sent, total=len(users)),
-        reply_markup=admin_menu_keyboard('uz', get_is_private(callback))
+        get_text(lang, 'broadcast_completed', sent=sent, total=len(users)),
+        reply_markup=admin_menu_keyboard(lang, get_is_private(callback))
     )
     
     await state.set_state(AdminStates.in_admin_panel)
@@ -859,16 +847,17 @@ async def cancel_broadcast(callback: CallbackQuery, state: FSMContext):
     """Broadcast ni bekor qilish"""
     # Admin tekshiruvi
     if not await db.is_admin(callback.from_user.id):
-        await callback.answer("❌ Ruxsat yo'q!", show_alert=True)
+        await callback.answer(get_text(await get_admin_lang(callback.from_user.id, state), 'access_denied'), show_alert=True)
         return
 
+    lang = await get_admin_lang(callback.from_user.id, state)
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.answer("❌ Bekor qilindi")
+    await callback.answer(get_text(lang, 'broadcast_cancelled'))
     
     await state.set_state(AdminStates.in_admin_panel)
     await callback.message.answer(
-        get_text(await get_admin_lang(callback.from_user.id), 'admin_welcome'),
-        reply_markup=admin_menu_keyboard(await get_admin_lang(callback.from_user.id), get_is_private(callback))
+        get_text(lang, 'admin_welcome'),
+        reply_markup=admin_menu_keyboard(lang, get_is_private(callback))
     )
 
 
@@ -881,10 +870,10 @@ async def cancel_broadcast(callback: CallbackQuery, state: FSMContext):
 async def start_db_upload(message: Message, state: FSMContext):
     """Database yuklashni boshlash"""
     if not await db.is_admin(message.from_user.id):
-        await message.answer(get_text(await get_admin_lang(message.from_user.id), 'access_denied'))
+        await message.answer(get_text(await get_admin_lang(message.from_user.id, state), 'access_denied'))
         return
 
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
     
     await state.set_state(AdminStates.uploading_database)
     await message.answer(
@@ -897,10 +886,10 @@ async def start_db_upload(message: Message, state: FSMContext):
 async def process_db_upload(message: Message, state: FSMContext):
     """Database faylini yuklash"""
     if not await db.is_admin(message.from_user.id):
-        await message.answer(get_text(await get_admin_lang(message.from_user.id), 'access_denied'))
+        await message.answer(get_text(await get_admin_lang(message.from_user.id, state), 'access_denied'))
         return
 
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
     
     doc = message.document
     
@@ -952,10 +941,10 @@ async def process_db_upload(message: Message, state: FSMContext):
 async def start_admin_search(message: Message, state: FSMContext):
     """Admin trek qidirishni boshlash"""
     if not await db.is_admin(message.from_user.id):
-        await message.answer(get_text(await get_admin_lang(message.from_user.id), 'access_denied'))
+        await message.answer(get_text(await get_admin_lang(message.from_user.id, state), 'access_denied'))
         return
 
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
     
     await state.set_state(AdminStates.admin_searching_trek)
     await message.answer(
@@ -967,7 +956,7 @@ async def start_admin_search(message: Message, state: FSMContext):
 @dp.message(AdminStates.admin_searching_trek, F.text)
 async def process_admin_search(message: Message, state: FSMContext):
     """Admin trek qidirish (full access)"""
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
 
     if message.text in (get_text('uz', 'back'), get_text('ru', 'back')):
         await state.set_state(AdminStates.in_admin_panel)
@@ -997,14 +986,14 @@ async def process_admin_search(message: Message, state: FSMContext):
                     quantity=item['quantity'],
                     flight=item['flight']
                 )
-                response += f"\n👤 Customer: {item['customer_code']}"
+                response += f"\n{get_text(lang, 'admin_customer_label')}: {item['customer_code']}"
                 
                 await message.answer(response)
         else:
             await message.answer(f"{get_text(lang, 'trek_not_found')}: {code}")
     
     if not found_any:
-        await message.answer("❌ Hech qanday yuk topilmadi")
+        await message.answer(get_text(lang, 'no_shipments_found'))
 
 
 # ==================== FEEDBACK REPLY ====================
@@ -1014,10 +1003,11 @@ async def feedback_reply_callback(callback: CallbackQuery, state: FSMContext):
     """Feedbackga javob berish"""
     # Admin tekshiruvi
     if not await db.is_admin(callback.from_user.id):
-        await callback.answer("❌ Ruxsat yo'q!", show_alert=True)
+        await callback.answer(get_text(await get_admin_lang(callback.from_user.id, state), 'access_denied'), show_alert=True)
         return
 
     try:
+        lang = await get_admin_lang(callback.from_user.id, state)
         parts = callback.data.split(":")
         user_telegram_id = int(parts[1])
         feedback_id = int(parts[2])
@@ -1030,15 +1020,15 @@ async def feedback_reply_callback(callback: CallbackQuery, state: FSMContext):
         await state.set_state(AdminStates.replying_to_feedback)
         
         await callback.message.answer(
-            "💬 Javobingizni yozing:",
-            reply_markup=back_keyboard('uz', get_is_private(callback))
+            get_text(lang, 'feedback_reply_prompt'),
+            reply_markup=back_keyboard(lang, get_is_private(callback))
         )
         
         await callback.answer()
     
     except Exception as e:
         logger.error(f"Feedback reply callback error: {e}")
-        await callback.answer("❌ Xatolik!", show_alert=True)
+        await callback.answer(get_text(await get_admin_lang(callback.from_user.id, state), 'error_general'), show_alert=True)
 
 
 @dp.message(AdminStates.replying_to_feedback, F.text)
@@ -1048,7 +1038,7 @@ async def process_feedback_reply(message: Message, state: FSMContext):
     user_telegram_id = data.get('replying_to_user')
     feedback_id = data.get('replying_to_feedback')
     
-    lang = await get_admin_lang(message.from_user.id)
+    lang = await get_admin_lang(message.from_user.id, state)
 
     if message.text in (get_text('uz', 'back'), get_text('ru', 'back')):
         await state.clear()
@@ -1059,7 +1049,7 @@ async def process_feedback_reply(message: Message, state: FSMContext):
         return
     
     if not user_telegram_id or not feedback_id:
-        await message.answer("❌ Xatolik: Ma'lumotlar topilmadi")
+        await message.answer(get_text(lang, 'data_not_found'))
         return
     
     reply_text = message.text
@@ -1077,17 +1067,15 @@ async def process_feedback_reply(message: Message, state: FSMContext):
                     get_text(user['language'], 'feedback_reply', reply=reply_text)
                 )
                 
-                await message.answer(
-                    "✅ Javob foydalanuvchiga yuborildi!"
-                )
+                await message.answer(get_text(lang, 'feedback_reply_sent'))
             else:
-                await message.answer("❌ Foydalanuvchi topilmadi")
+                await message.answer(get_text(lang, 'user_not_found'))
         
         except Exception as e:
             logger.error(f"Send reply error: {e}")
-            await message.answer(f"❌ Yuborishda xatolik: {e}")
+            await message.answer(get_text(lang, 'send_error', error=e))
     else:
-        await message.answer("❌ Saqlashda xatolik")
+        await message.answer(get_text(lang, 'save_error'))
     
     await state.clear()
 
