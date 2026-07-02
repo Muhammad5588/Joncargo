@@ -26,11 +26,11 @@ from utils.keyboards import (
     confirm_keyboard,
     verification_inline_keyboard
 )
-from utils.formatters import format_phone_display
+from utils.formatters import format_phone_display, format_verification_status
 from utils.language import clear_state_keep_language, resolve_language
 from utils.rate_limiter import login_limiter
 
-from states.AdminStates import RegistrationStates, LoginStates
+from states.AdminStates import RegistrationStates, LoginStates, ProfileCompletionStates
 
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,195 @@ def get_phone_validation_error(lang: str, message: str) -> str:
     """Translate validator phone errors without changing validator API."""
     key = PHONE_VALIDATION_ERROR_KEYS.get(message)
     return get_text(lang, key) if key else message
+
+
+PROFILE_FIELD_ORDER = [
+    "fullname",
+    "phone",
+    "passport_number",
+    "birth_date",
+    "pinfl",
+    "address",
+]
+
+PROFILE_FIELD_STATES = {
+    "fullname": ProfileCompletionStates.entering_fullname,
+    "passport_number": ProfileCompletionStates.entering_passport_number,
+    "birth_date": ProfileCompletionStates.entering_birth_date,
+    "pinfl": ProfileCompletionStates.entering_pinfl,
+    "address": ProfileCompletionStates.entering_address,
+}
+
+PROFILE_FIELD_PROMPTS = {
+    "fullname": "enter_fullname",
+    "passport_number": "enter_passport_number",
+    "birth_date": "enter_birth_date",
+    "pinfl": "enter_pinfl",
+    "address": "enter_address",
+}
+
+
+def is_missing_profile_value(value) -> bool:
+    text = str(value or "").strip()
+    return not text or text.casefold() in {"none", "nan", "null", "-", "—"}
+
+
+def normalize_phone_for_compare(phone: str) -> str:
+    valid, _, normalized = Validators.validate_phone(str(phone or ""))
+    if valid:
+        return normalized
+    return ""
+
+
+def build_profile_payload(state_data: dict, existing_user: dict | None = None) -> dict:
+    payload = {}
+    existing_user = existing_user or {}
+    for field in PROFILE_FIELD_ORDER:
+        value = state_data.get(field)
+        if is_missing_profile_value(value):
+            value = existing_user.get(field, "")
+        payload[field] = value or ""
+
+    return payload
+
+
+async def finish_approved_login(message: Message, state: FSMContext, lang: str, user: dict, client_code: str):
+    login_limiter.reset(message.from_user.id)
+    await state.clear()
+    await state.update_data(language=lang, user_id=user['id'])
+
+    try:
+        await db.execute(
+            'UPDATE users SET language = ? WHERE id = ?',
+            (lang, user['id'])
+        )
+        await db.update_user_id(message.from_user.id, client_code)
+        await db.activate_user(message.from_user.id)
+    except Exception as e:
+        logger.error(f"Error finalizing login: {e}")
+
+    await message.answer(
+        get_text(lang, 'login_success', fullname=user['fullname']),
+        reply_markup=main_menu_keyboard(lang, await db.is_admin(message.from_user.id))
+    )
+
+
+async def answer_non_approved_login(message: Message, state: FSMContext, lang: str, user: dict, client_code: str):
+    await state.clear()
+    await state.update_data(language=lang, user_id=user['id'])
+
+    try:
+        await db.execute(
+            'UPDATE users SET language = ? WHERE id = ?',
+            (lang, user['id'])
+        )
+        await db.update_user_id(message.from_user.id, client_code)
+        await db.activate_user(message.from_user.id)
+    except Exception as e:
+        logger.error(f"Error linking pending/rejected user: {e}")
+
+    status_text = format_verification_status(user['verification_status'], lang)
+    if user['verification_status'] == 'rejected':
+        status_message = get_text(lang, 'status_rejected', reason=user.get('rejection_reason') or "—")
+    else:
+        status_message = get_text(lang, 'status_pending')
+
+    await message.answer(
+        get_text(
+            lang,
+            'welcome_registered',
+            fullname=user['fullname'],
+            client_code=user['client_code'],
+            phone=format_phone_display(user['phone']),
+            status=status_text,
+            status_message=status_message
+        ),
+        reply_markup=welcome_keyboard(lang, get_is_private(message))
+    )
+
+
+async def start_profile_completion(
+    message: Message,
+    state: FSMContext,
+    lang: str,
+    client_code: str,
+    existing_user: dict | None,
+    provided_fields: dict | None = None,
+):
+    provided_fields = provided_fields or {}
+    existing_missing = db.get_missing_profile_fields(existing_user) if existing_user else PROFILE_FIELD_ORDER
+    missing_fields = [
+        field for field in PROFILE_FIELD_ORDER
+        if field != "phone"
+        and field in existing_missing
+        and is_missing_profile_value(provided_fields.get(field))
+    ]
+
+    completion_data = {
+        "language": lang,
+        "completion_client_code": existing_user.get("client_code") if existing_user else client_code,
+        "completion_user_id": existing_user.get("id") if existing_user else None,
+        "completion_is_new": existing_user is None,
+        "completion_missing_fields": missing_fields,
+    }
+    completion_data.update(provided_fields)
+    await state.update_data(**completion_data)
+
+    intro_key = "client_code_not_found_complete" if existing_user is None else "client_profile_incomplete"
+    await message.answer(
+        get_text(
+            lang,
+            intro_key,
+            client_code=completion_data["completion_client_code"]
+        ),
+        reply_markup=cancel_keyboard(lang, get_is_private(message))
+    )
+    await ask_next_profile_completion_field(message, state, lang)
+
+
+async def ask_next_profile_completion_field(message: Message, state: FSMContext, lang: str):
+    data = await state.get_data()
+    missing_fields = data.get("completion_missing_fields", [])
+
+    for field in missing_fields:
+        if is_missing_profile_value(data.get(field)):
+            await state.set_state(PROFILE_FIELD_STATES[field])
+            if field == "passport_number":
+                await send_passport_template(message, lang)
+            elif field == "pinfl" and os.path.exists(PINFL_TEMPLATE):
+                try:
+                    await message.answer_photo(FSInputFile(PINFL_TEMPLATE), caption="📸 PINFL")
+                except Exception as e:
+                    logger.warning(f"PINFL template yuborishda xatolik: {e}")
+
+            await message.answer(
+                get_text(lang, PROFILE_FIELD_PROMPTS[field]),
+                reply_markup=cancel_keyboard(lang, get_is_private(message))
+            )
+            return
+
+    existing_user = None
+    if data.get("completion_user_id"):
+        existing_user = await db.get_user_by_id(data["completion_user_id"])
+        if not existing_user:
+            existing_user = await db.get_user_by_client_code(data["completion_client_code"], active_only=False)
+
+    payload = build_profile_payload(data, existing_user)
+    await state.set_state(ProfileCompletionStates.confirming_profile)
+    await message.answer(
+        get_text(
+            lang,
+            'confirm_profile_completion',
+            client_code=data["completion_client_code"],
+            fullname=payload["fullname"],
+            phone=format_phone_display(payload["phone"]),
+            passport=payload["passport_number"],
+            birth_date=payload["birth_date"],
+            pinfl=payload["pinfl"],
+            address=payload["address"]
+        ),
+        reply_markup=confirm_keyboard(lang, get_is_private(message))
+    )
 
 
 # ==================== RO'YXATDAN O'TISH ====================
@@ -494,6 +683,155 @@ async def send_to_verification_group(user: dict, data: dict):
         logger.error(f"Verification guruhga yuborishda xatolik (user: {user.get('id', 'unknown')}): {e}", exc_info=True)
 
 
+# ==================== PROFILNI TO'LDIRISH ====================
+
+@dp.message(ProfileCompletionStates.entering_fullname, F.text)
+async def complete_fullname(message: Message, state: FSMContext):
+    lang = await resolve_language(message, state, prefer_message_text=True, active_only=False)
+    if message.text == get_text(lang, 'cancel'):
+        await clear_state_keep_language(state, lang)
+        await message.answer(
+            get_text(lang, 'operation_cancelled'),
+            reply_markup=welcome_keyboard(lang, get_is_private(message))
+        )
+        return
+
+    valid, msg, formatted = Validators.validate_fullname(message.text)
+    if not valid:
+        await message.answer(f"❌ {msg}\n\n{get_text(lang, 'enter_fullname')}")
+        return
+
+    await state.update_data(fullname=formatted)
+    await ask_next_profile_completion_field(message, state, lang)
+
+
+@dp.message(ProfileCompletionStates.entering_passport_number, F.text)
+async def complete_passport_number(message: Message, state: FSMContext):
+    lang = await resolve_language(message, state, prefer_message_text=True, active_only=False)
+    if message.text == get_text(lang, 'cancel'):
+        await clear_state_keep_language(state, lang)
+        await message.answer(
+            get_text(lang, 'operation_cancelled'),
+            reply_markup=welcome_keyboard(lang, get_is_private(message))
+        )
+        return
+
+    valid, msg, passport = Validators.validate_passport_number(message.text)
+    if not valid:
+        await message.answer(f"❌ {msg}")
+        return
+
+    await state.update_data(passport_number=passport)
+    await ask_next_profile_completion_field(message, state, lang)
+
+
+@dp.message(ProfileCompletionStates.entering_birth_date, F.text)
+async def complete_birth_date(message: Message, state: FSMContext):
+    lang = await resolve_language(message, state, prefer_message_text=True, active_only=False)
+    if message.text == get_text(lang, 'cancel'):
+        await clear_state_keep_language(state, lang)
+        await message.answer(
+            get_text(lang, 'operation_cancelled'),
+            reply_markup=welcome_keyboard(lang, get_is_private(message))
+        )
+        return
+
+    valid, msg, birth_date, warning, _ = Validators.validate_birth_date(message.text)
+    if not valid:
+        await message.answer(f"❌ {msg}")
+        return
+
+    await state.update_data(birth_date=birth_date)
+    if warning:
+        await message.answer(warning)
+    await ask_next_profile_completion_field(message, state, lang)
+
+
+@dp.message(ProfileCompletionStates.entering_pinfl, F.text)
+async def complete_pinfl(message: Message, state: FSMContext):
+    lang = await resolve_language(message, state, prefer_message_text=True, active_only=False)
+    if message.text == get_text(lang, 'cancel'):
+        await clear_state_keep_language(state, lang)
+        await message.answer(
+            get_text(lang, 'operation_cancelled'),
+            reply_markup=welcome_keyboard(lang, get_is_private(message))
+        )
+        return
+
+    valid, msg, pinfl = Validators.validate_pinfl(message.text)
+    if not valid:
+        await message.answer(f"❌ {msg}")
+        return
+
+    await state.update_data(pinfl=pinfl)
+    await ask_next_profile_completion_field(message, state, lang)
+
+
+@dp.message(ProfileCompletionStates.entering_address, F.text)
+async def complete_address(message: Message, state: FSMContext):
+    lang = await resolve_language(message, state, prefer_message_text=True, active_only=False)
+    if message.text == get_text(lang, 'cancel'):
+        await clear_state_keep_language(state, lang)
+        await message.answer(
+            get_text(lang, 'operation_cancelled'),
+            reply_markup=welcome_keyboard(lang, get_is_private(message))
+        )
+        return
+
+    valid, msg, address = Validators.validate_address(message.text)
+    if not valid:
+        await message.answer(f"❌ {msg}")
+        return
+
+    await state.update_data(address=address)
+    await ask_next_profile_completion_field(message, state, lang)
+
+
+@dp.message(ProfileCompletionStates.confirming_profile, F.text)
+async def confirm_profile_completion(message: Message, state: FSMContext):
+    lang = await resolve_language(message, state, prefer_message_text=True, active_only=False)
+    data = await state.get_data()
+
+    if message.text == get_text(lang, 'cancel'):
+        await clear_state_keep_language(state, lang)
+        await message.answer(
+            get_text(lang, 'operation_cancelled'),
+            reply_markup=welcome_keyboard(lang, get_is_private(message))
+        )
+        return
+
+    if message.text != get_text(lang, 'confirm'):
+        await message.answer(get_text(lang, 'confirm_or_cancel'))
+        return
+
+    existing_user = None
+    if data.get("completion_user_id"):
+        existing_user = await db.get_user_by_client_code(data["completion_client_code"], active_only=False)
+
+    payload = build_profile_payload(data, existing_user)
+    success, msg, user, created, needs_review = await db.complete_client_profile(
+        data["completion_client_code"],
+        message.from_user.id,
+        payload,
+        lang
+    )
+
+    if not success or not user:
+        await message.answer(f"❌ {msg}")
+        return
+
+    if needs_review:
+        await send_to_verification_group(user, payload)
+        await clear_state_keep_language(state, lang)
+        await message.answer(
+            get_text(lang, 'profile_completion_submitted'),
+            reply_markup=welcome_keyboard(lang, get_is_private(message))
+        )
+        return
+
+    await finish_approved_login(message, state, lang, user, user['client_code'])
+
+
 # ==================== LOGIN ====================
 
 @dp.message(F.text.in_([
@@ -562,38 +900,60 @@ async def process_phone_verify(message: Message, state: FSMContext):
         await message.answer(f"❌ {get_phone_validation_error(lang, msg)}\n\n{get_text(lang, 'enter_phone_verify')}")
         return
 
-    user = await db.verify_login(client_code, normalized_phone)
+    user = await db.get_user_by_client_code(client_code, active_only=False)
     logger.debug(f"Login attempt: client_code={client_code}, user_found={bool(user)}")
-    
-    if user:
-        login_limiter.reset(message.from_user.id)
-        await state.clear()
-        await state.update_data(language=lang, user_id=user['id'])
 
-        try:
-            await db.execute(
-                'UPDATE users SET language = ? WHERE id = ?',
-                (lang, user['id'])
+    if not user:
+        login_limiter.reset(message.from_user.id)
+        await start_profile_completion(
+            message,
+            state,
+            lang,
+            client_code,
+            None,
+            {"phone": normalized_phone}
+        )
+        return
+
+    stored_phone = user.get("phone")
+    if not is_missing_profile_value(stored_phone):
+        if normalize_phone_for_compare(stored_phone) != normalized_phone:
+            login_limiter.record_failure(message.from_user.id)
+            logger.warning(f"Failed login attempt: user_id={message.from_user.id}, client_code={client_code}")
+            await message.answer(get_text(lang, 'login_failed'))
+            await clear_state_keep_language(state, lang)
+            bot_title = await bot.get_me()
+            await message.answer(
+                get_text(lang, 'welcome_new', bot_name=bot_title.first_name),
+                reply_markup=welcome_keyboard(lang, get_is_private(message), bot_name=bot_title.first_name)
             )
-        except Exception as e:
-            logger.error(f"Error updating user language: {e}")
-        
-        await message.answer(
-            get_text(lang, 'login_success', fullname=user['fullname']),
-            reply_markup=main_menu_keyboard(lang, await db.is_admin(message.from_user.id))
-        )
-        try:
-            await db.update_user_id(message.from_user.id, client_code)
-        except Exception as e:
-            logger.error(f"Error updating user ID: {e}")
-        await db.activate_user(message.from_user.id)
+            return
+
+        provided_fields = {}
     else:
-        login_limiter.record_failure(message.from_user.id)
-        logger.warning(f"Failed login attempt: user_id={message.from_user.id}, client_code={client_code}")
-        await message.answer(get_text(lang, 'login_failed'))
-        await clear_state_keep_language(state, lang)
-        bot_title = await bot.get_me()
-        await message.answer(
-            get_text(lang, 'welcome_new', bot_name=bot_title.first_name),
-            reply_markup=welcome_keyboard(lang, get_is_private(message), bot_name=bot_title.first_name)
+        provided_fields = {"phone": normalized_phone}
+
+    missing_fields = db.get_missing_profile_fields(user)
+    remaining_missing_fields = [
+        field for field in missing_fields
+        if field != "phone" and is_missing_profile_value(provided_fields.get(field))
+    ]
+
+    if "phone" in missing_fields or remaining_missing_fields:
+        login_limiter.reset(message.from_user.id)
+        await start_profile_completion(
+            message,
+            state,
+            lang,
+            user.get("client_code") or client_code,
+            user,
+            provided_fields
         )
+        return
+
+    if user.get('verification_status') != 'approved':
+        login_limiter.reset(message.from_user.id)
+        await answer_non_approved_login(message, state, lang, user, user.get("client_code") or client_code)
+        return
+
+    await finish_approved_login(message, state, lang, user, user.get("client_code") or client_code)

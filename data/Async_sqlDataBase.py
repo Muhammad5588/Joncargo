@@ -55,6 +55,21 @@ def _normalize_client_code(client_code) -> str:
     return re.sub(r"[^A-Z0-9]", "", str(client_code or "").upper())
 
 
+PROFILE_REQUIRED_FIELDS = (
+    "fullname",
+    "phone",
+    "passport_number",
+    "birth_date",
+    "pinfl",
+    "address",
+)
+
+
+def _is_missing_profile_value(value) -> bool:
+    text = str(value or "").strip()
+    return not text or text.casefold() in {"none", "nan", "null", "-", "—"}
+
+
 
 class ConnectionPool:
     """Connection pool for aiosqlite with size limit"""
@@ -1122,17 +1137,181 @@ class AsyncDatabase:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
 
-    async def get_user_by_client_code(self, client_code: str) -> Optional[Dict]:
+    async def get_user_by_client_code(self, client_code: str, active_only: bool = True) -> Optional[Dict]:
         """Mijoz kodi bo'yicha foydalanuvchini olish"""
         clean_client_code = _normalize_client_code(client_code)
+        if not clean_client_code:
+            return None
+
+        active_filter = 'AND is_active = 1' if active_only else ''
         async with self.get_connection() as conn:
             conn.row_factory = aiosqlite.Row
             async with conn.execute(
-                'SELECT * FROM users WHERE UPPER(client_code) = UPPER(?) AND is_active = 1',
+                f'''
+                SELECT * FROM users
+                WHERE UPPER(client_code) = UPPER(?) {active_filter}
+                ORDER BY COALESCE(last_login, registered_at) DESC, id DESC
+                LIMIT 1
+                ''',
                 (clean_client_code,)
             ) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
+
+    def get_missing_profile_fields(self, user: Dict) -> List[str]:
+        """Foydalanuvchida to'ldirilmagan asosiy maydonlarni qaytarish"""
+        return [
+            field
+            for field in PROFILE_REQUIRED_FIELDS
+            if _is_missing_profile_value(user.get(field))
+        ]
+
+    async def complete_client_profile(
+        self,
+        client_code: str,
+        telegram_id: int,
+        user_data: Dict,
+        language: str = "uz"
+    ) -> Tuple[bool, str, Optional[Dict], bool, bool]:
+        """
+        Client code bo'yicha yangi yoki chala profilni to'ldirish.
+
+        Returns:
+            (success, message, user, created, needs_review)
+        """
+        clean_client_code = _normalize_client_code(client_code)
+        if not clean_client_code:
+            return False, "Invalid client code", None, False, False
+
+        values = {
+            "fullname": user_data.get("fullname", ""),
+            "phone": user_data.get("phone", ""),
+            "passport_number": user_data.get("passport_number", ""),
+            "birth_date": user_data.get("birth_date", ""),
+            "pinfl": user_data.get("pinfl", ""),
+            "address": user_data.get("address", ""),
+            "passport_front_file_id": user_data.get("passport_front_file_id"),
+            "passport_back_file_id": user_data.get("passport_back_file_id"),
+            "passport_front_file_unique_id": user_data.get("passport_front_file_unique_id"),
+            "passport_back_file_unique_id": user_data.get("passport_back_file_unique_id"),
+        }
+
+        try:
+            async with self.get_connection() as conn:
+                conn.row_factory = aiosqlite.Row
+                async with conn.execute(
+                    'SELECT * FROM users WHERE UPPER(client_code) = UPPER(?)',
+                    (clean_client_code,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+
+                created = row is None
+                if row:
+                    existing = dict(row)
+                    current_status = existing.get("verification_status") or VerificationStatus.PENDING
+                    next_status = (
+                        VerificationStatus.PENDING
+                        if current_status == VerificationStatus.REJECTED
+                        else current_status
+                    )
+
+                    await conn.execute(
+                        '''
+                        UPDATE users
+                        SET telegram_id = ?,
+                            fullname = ?,
+                            phone = ?,
+                            passport_number = ?,
+                            birth_date = ?,
+                            pinfl = ?,
+                            address = ?,
+                            passport_front_file_id = COALESCE(?, passport_front_file_id),
+                            passport_back_file_id = COALESCE(?, passport_back_file_id),
+                            passport_front_file_unique_id = COALESCE(?, passport_front_file_unique_id),
+                            passport_back_file_unique_id = COALESCE(?, passport_back_file_unique_id),
+                            language = ?,
+                            verification_status = ?,
+                            rejection_reason = CASE
+                                WHEN ? = ? THEN NULL
+                                ELSE rejection_reason
+                            END,
+                            is_active = 1,
+                            last_login = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        ''',
+                        (
+                            telegram_id,
+                            values["fullname"],
+                            values["phone"],
+                            values["passport_number"],
+                            values["birth_date"],
+                            values["pinfl"],
+                            values["address"],
+                            values["passport_front_file_id"],
+                            values["passport_back_file_id"],
+                            values["passport_front_file_unique_id"],
+                            values["passport_back_file_unique_id"],
+                            language,
+                            next_status,
+                            current_status,
+                            VerificationStatus.REJECTED,
+                            existing["id"],
+                        )
+                    )
+                    user_id = existing["id"]
+                    needs_review = next_status != VerificationStatus.APPROVED
+                else:
+                    await conn.execute(
+                        '''
+                        INSERT INTO users
+                        (telegram_id, client_code, fullname, phone, passport_number,
+                         birth_date, pinfl, address,
+                         passport_front_file_id, passport_back_file_id,
+                         passport_front_file_unique_id, passport_back_file_unique_id,
+                         language, verification_status, is_active, last_login)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                        ''',
+                        (
+                            telegram_id,
+                            clean_client_code,
+                            values["fullname"],
+                            values["phone"],
+                            values["passport_number"],
+                            values["birth_date"],
+                            values["pinfl"],
+                            values["address"],
+                            values["passport_front_file_id"],
+                            values["passport_back_file_id"],
+                            values["passport_front_file_unique_id"],
+                            values["passport_back_file_unique_id"],
+                            language,
+                            VerificationStatus.PENDING,
+                        )
+                    )
+                    cursor = await conn.execute('SELECT last_insert_rowid()')
+                    user_id_row = await cursor.fetchone()
+                    user_id = user_id_row[0]
+                    needs_review = True
+
+                await conn.execute(
+                    '''
+                    UPDATE users
+                    SET telegram_id = NULL
+                    WHERE telegram_id = ?
+                      AND id != ?
+                    ''',
+                    (telegram_id, user_id)
+                )
+                await conn.commit()
+
+                async with conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)) as cursor:
+                    updated = await cursor.fetchone()
+
+                return True, "Success", dict(updated) if updated else None, created, needs_review
+
+        except Exception as e:
+            logger.error(f"Complete client profile error: {e}")
+            return False, str(e), None, False, False
 
     async def search_users(self, query: str) -> List[Dict]:
         """Foydalanuvchilarni qidirish"""
@@ -1259,7 +1438,12 @@ class AsyncDatabase:
     async def approve_user(self, user_id: int) -> bool:
         """Foydalanuvchini tasdiqlash"""
         try:
-            client_code = await self.generate_client_code()
+            existing_user = await self.get_user_by_id(user_id)
+            client_code = (
+                existing_user.get('client_code')
+                if existing_user and existing_user.get('client_code')
+                else await self.generate_client_code()
+            )
             await self.execute('''
                 UPDATE users 
                 SET verification_status = ?, 

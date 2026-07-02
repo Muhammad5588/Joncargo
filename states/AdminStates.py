@@ -41,6 +41,15 @@ class LoginStates(StatesGroup):
     entering_phone_verify = State()
 
 
+class ProfileCompletionStates(StatesGroup):
+    entering_fullname = State()
+    entering_passport_number = State()
+    entering_birth_date = State()
+    entering_pinfl = State()
+    entering_address = State()
+    confirming_profile = State()
+
+
 class EditUserDataStates(StatesGroup):
     editing_user_data = State()
 

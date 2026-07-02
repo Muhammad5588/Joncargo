@@ -145,6 +145,30 @@ TEXTS = {
         'phone_error_empty': "Telefon raqam kiritilmadi",
         'phone_error_invalid_format': "Telefon raqam noto'g'ri formatda",
         'phone_error_invalid_length': "Telefon raqam 12 ta raqamdan iborat bo'lishi kerak",
+        'client_profile_incomplete': (
+            "ℹ️ {client_code} mijoz kodi bo'yicha ma'lumotlar to'liq emas.\n\n"
+            "Davom etish uchun yetishmayotgan ma'lumotlarni kiriting."
+        ),
+        'client_code_not_found_complete': (
+            "ℹ️ {client_code} mijoz kodi bazada topilmadi.\n\n"
+            "Shu kod bilan ro'yxatdan o'tish uchun ma'lumotlaringizni to'ldiring. "
+            "Ariza admin tasdig'iga yuboriladi."
+        ),
+        'confirm_profile_completion': (
+            "✅ Ma'lumotlaringizni tekshiring:\n\n"
+            "🆔 Mijoz kodi: {client_code}\n"
+            "👤 F.I.O: {fullname}\n"
+            "📱 Telefon: {phone}\n"
+            "🔖 Pasport: {passport}\n"
+            "📅 Tug'ilgan: {birth_date}\n"
+            "🔢 PINFL: {pinfl}\n"
+            "📍 Manzil: {address}\n\n"
+            "To'g'rimi?"
+        ),
+        'profile_completion_submitted': (
+            "📋 Ma'lumotlaringiz qabul qilindi!\n\n"
+            "⏳ Profil admin tasdig'iga yuborildi. Tasdiqlangandan keyin botdan to'liq foydalanishingiz mumkin."
+        ),
         
         # ==================== PROFIL ====================
         'profile_info': (
@@ -535,6 +559,30 @@ TEXTS = {
         'phone_error_empty': "Номер телефона не введён",
         'phone_error_invalid_format': "Неверный формат номера телефона",
         'phone_error_invalid_length': "Номер телефона должен состоять из 12 цифр",
+        'client_profile_incomplete': (
+            "ℹ️ По коду клиента {client_code} данные заполнены не полностью.\n\n"
+            "Для продолжения введите недостающую информацию."
+        ),
+        'client_code_not_found_complete': (
+            "ℹ️ Код клиента {client_code} не найден в базе.\n\n"
+            "Заполните данные, чтобы зарегистрироваться с этим кодом. "
+            "Заявка будет отправлена администратору на проверку."
+        ),
+        'confirm_profile_completion': (
+            "✅ Проверьте ваши данные:\n\n"
+            "🆔 Код клиента: {client_code}\n"
+            "👤 Ф.И.О: {fullname}\n"
+            "📱 Телефон: {phone}\n"
+            "🔖 Паспорт: {passport}\n"
+            "📅 Дата рождения: {birth_date}\n"
+            "🔢 ПИНФЛ: {pinfl}\n"
+            "📍 Адрес: {address}\n\n"
+            "Всё верно?"
+        ),
+        'profile_completion_submitted': (
+            "📋 Ваши данные приняты!\n\n"
+            "⏳ Профиль отправлен администратору на проверку. После подтверждения вы сможете пользоваться ботом полностью."
+        ),
         
         # Profil
         'profile_info': (
